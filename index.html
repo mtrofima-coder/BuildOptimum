@@ -1,1 +1,181 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Учёт рабочего времени</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: Arial, sans-serif; background: #f0f2f5; min-height: 100vh; }
+.container { max-width: 480px; margin: 0 auto; padding: 20px; }
+h1 { text-align: center; color: #333; margin-bottom: 24px; font-size: 22px; }
+.card { background: white; border-radius: 12px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 16px; }
+label { display: block; font-weight: bold; color: #555; margin-bottom: 6px; }
+select, textarea { width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 16px; margin-bottom: 16px; }
+.btn { width: 100%; padding: 14px; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; cursor: pointer; margin-bottom: 10px; }
+.btn-start { background: #4CAF50; color: white; }
+.btn-end { background: #f44336; color: white; }
+.btn-photo { background: #2196F3; color: white; }
+.btn:disabled { opacity: 0.5; }
+#preview { width: 100%; border-radius: 8px; margin-bottom: 16px; display: none; }
+#status { text-align: center; padding: 12px; border-radius: 8px; display: none; font-weight: bold; }
+.success { background: #e8f5e9; color: #2e7d32; }
+.error { background: #ffebee; color: #c62828; }
+.loading { background: #e3f2fd; color: #1565c0; }
+</style>
+</head>
+<body>
+<div class="container">
+<h1>Учёт рабочего времени</h1>
+
+<div class="card">
+<label>Подразделение</label>
+<select id="department" onchange="loadEmployees()">
+<option value="">— Выберите подразделение —</option>
+</select>
+
+<label>ФИО</label>
+<select id="employee">
+<option value="">— Сначала выберите подразделение —</option>
+</select>
+</div>
+
+<div class="card">
+<label>Фото</label>
+<button class="btn btn-photo" onclick="openCamera()">📷 Сделать фото</button>
+<input type="file" id="camera" accept="image/*" capture="environment" style="display:none" onchange="previewPhoto()">
+<img id="preview" alt="Фото">
+</div>
+
+<div class="card">
+<label>Комментарий (для доп. смены)</label>
+<textarea id="comment" rows="2" placeholder="Необязательно..."></textarea>
+
+<button class="btn btn-start" onclick="submit('Начало смены')">✅ Начало смены</button>
+<button class="btn btn-end" onclick="submit('Конец смены')">🏁 Конец смены</button>
+</div>
+
+<div id="status"></div>
+</div>
+
+<script>
+const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbx6KL85WjUmvWjcMuMP61EOVGtld6ILexgsWzWtML37BLBhAp_H72kGOag3U9CiOfCf/exec';
+
+let photoBase64 = null;
+let geoData = null;
+
+// Загрузка подразделений
+async function loadDepartments() {
+try {
+const res = await fetch(SCRIPT_URL);
+const data = await res.json();
+const dept = document.getElementById('department');
+Object.keys(data).forEach(d => {
+const opt = document.createElement('option');
+opt.value = d;
+opt.textContent = d;
+dept.appendChild(opt);
+});
+// Восстановить сохранённый выбор
+const saved = localStorage.getItem('savedDept');
+if (saved) { dept.value = saved; loadEmployees(); }
+} catch(e) {
+console.error(e);
+}
+}
+
+// Загрузка сотрудников
+async function loadEmployees() {
+const dept = document.getElementById('department').value;
+if (!dept) return;
+localStorage.setItem('savedDept', dept);
+const res = await fetch(SCRIPT_URL);
+const data = await res.json();
+const emp = document.getElementById('employee');
+emp.innerHTML = '<option value="">— Выберите ФИО —</option>';
+(data[dept] || []).forEach(name => {
+const opt = document.createElement('option');
+opt.value = name;
+opt.textContent = name;
+emp.appendChild(opt);
+});
+const savedEmp = localStorage.getItem('savedEmp');
+if (savedEmp) emp.value = savedEmp;
+}
+
+// Камера
+function openCamera() {
+document.getElementById('camera').click();
+}
+
+function previewPhoto() {
+const file = document.getElementById('camera').files[0];
+if (!file) return;
+const reader = new FileReader();
+reader.onload = e => {
+photoBase64 = e.target.result;
+const preview = document.getElementById('preview');
+preview.src = photoBase64;
+preview.style.display = 'block';
+};
+reader.readAsDataURL(file);
+}
+
+// Геолокация
+function getGeo() {
+return new Promise((resolve) => {
+if (!navigator.geolocation) { resolve('Недоступно'); return; }
+navigator.geolocation.getCurrentPosition(
+p => resolve(p.coords.latitude + ',' + p.coords.longitude),
+() => resolve('Отказано')
+);
+});
+}
+
+// Отправка
+async function submit(action) {
+const dept = document.getElementById('department').value;
+const emp = document.getElementById('employee').value;
+const comment = document.getElementById('comment').value;
+
+if (!dept || !emp) { showStatus('Выберите подразделение и ФИО!', 'error'); return; }
+if (!photoBase64) { showStatus('Сделайте фото!', 'error'); return; }
+
+showStatus('Отправляем данные...', 'loading');
+localStorage.setItem('savedEmp', emp);
+
+const geo = await getGeo();
+
+try {
+await fetch(SCRIPT_URL, {
+method: 'POST',
+body: JSON.stringify({
+department: dept,
+name: emp,
+action: action,
+geo: geo,
+photo: photoBase64,
+comment: comment
+})
+});
+showStatus('✅ Данные отправлены!', 'success');
+photoBase64 = null;
+document.getElementById('preview').style.display = 'none';
+document.getElementById('comment').value = '';
+} catch(e) {
+showStatus('❌ Ошибка отправки. Попробуйте ещё раз.', 'error');
+}
+}
+
+function showStatus(msg, type) {
+const s = document.getElementById('status');
+s.textContent = msg;
+s.className = type;
+s.style.display = 'block';
+}
+
+loadDepartments();
+</script>
+</body>
+</html>
 
